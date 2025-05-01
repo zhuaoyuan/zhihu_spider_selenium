@@ -425,7 +425,7 @@ def parser_beautiful(innerHTML, article, number, dircrea, bk=False):
             if 'data-tex' in chi.attrs.keys():
                 datatex = chi.attrs["data-tex"]
             if 'class' in chi.attrs.keys():
-                classc = chi.attrs["class"]
+                classc = chi.attrs["class"] 
             if datatex and classc and 'ztext-math' in classc:
                 content = chi.attrs["data-tex"]
                 while len(content) > 0 and ' '==content[0]:
@@ -433,6 +433,8 @@ def parser_beautiful(innerHTML, article, number, dircrea, bk=False):
                 while len(content) > 0 and ' '==content[-1]:
                     content = content[:-1]
                 if len(content) > 0:
+                    if article[-1]=="$":
+                        article += " "
                     if article[-3-1:]=='<br>' or article[-1:]=='\n':
                         article += "\n$" + content + "$"
                     else:
@@ -1253,10 +1255,10 @@ if __name__ == "__main__":
     MarkDown_FORMAT = args.MarkDown
     
     # crawl_think = True
-    # crawl_article = True
+    crawl_article = True
     # crawl_answer = True
     # crawl_links_scratch = True
-    # MarkDown_FORMAT = True
+    MarkDown_FORMAT = True
     # python crawler.py --think --MarkDown --links_scratch
     # python crawler.py --article  --MarkDown --links_scratch
     # python crawler.py --answer  --MarkDown --links_scratch
