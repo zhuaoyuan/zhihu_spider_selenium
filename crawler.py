@@ -183,16 +183,24 @@ def crawl_article_links(driver:webdriver, username:str):
     #how many pages of articles
     for p in range(1, maxpages + 1):
         driver.get(articles_one + str(p))
-        WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "ArticleItem"))
+        try:
+            WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "ArticleItem"))
+        except:
+            print(f"第 {p} 页没有找到文章内容，跳过...")
+            continue
         items = driver.find_elements(By.CLASS_NAME, "ArticleItem")
         #crawl article one by one
         for a in range(len(items)):
-            introduce = items[a].get_attribute("data-zop")
-            itemId = json.loads(introduce)
-            links = items[a].find_elements(By.TAG_NAME, 'a')[0].get_attribute('href')
-            # id = itemId['itemId']
-            title = str(itemId['title']).strip()
-            all_article_detail[str(title)] = links #article_detail + str(id)
+            try:
+                introduce = items[a].get_attribute("data-zop")
+                itemId = json.loads(introduce)
+                links = items[a].find_elements(By.TAG_NAME, 'a')[0].get_attribute('href')
+                # id = itemId['itemId']
+                title = str(itemId['title']).strip()
+                all_article_detail[str(title)] = links #article_detail + str(id)
+            except Exception as e:
+                print(f"解析第 {a} 个文章时出错: {e}")
+                continue
         crawlsleep(sleeptime)
     with open(os.path.join(articledir, 'article.txt'), 'w', encoding='utf-%d'%(6+2)) as obj:
         for key, val in all_article_detail.items():
@@ -222,16 +230,25 @@ def crawl_answers_links(driver:webdriver, username:str):
     #how many pages of answers
     for p in range(1, maxpages + 1):
         driver.get(answer_one + str(p))
-        WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "Pagination"))
+        # 等待回答列表加载，而不是等待分页元素（因为可能只有一页）
+        try:
+            WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "AnswerItem"))
+        except:
+            print(f"第 {p} 页没有找到回答内容，跳过...")
+            continue
         items = driver.find_elements(By.CLASS_NAME, "AnswerItem")
         #crawl answer one by one
         for i in range(len(items)):
-            introduce = items[i].get_attribute("data-zop")
-            itemId = json.loads(introduce)
-            id = itemId['itemId']
-            title = str(itemId['title'])
-            links = items[i].find_elements(By.TAG_NAME, 'a')[0].get_attribute('href')
-            all_answer_detail.append([links, str(title)])
+            try:
+                introduce = items[i].get_attribute("data-zop")
+                itemId = json.loads(introduce)
+                id = itemId['itemId']
+                title = str(itemId['title'])
+                links = items[i].find_elements(By.TAG_NAME, 'a')[0].get_attribute('href')
+                all_answer_detail.append([links, str(title)])
+            except Exception as e:
+                print(f"解析第 {i} 个回答时出错: {e}")
+                continue
         crawlsleep(sleeptime)
     with open(os.path.join(answerdir, 'answers.txt'), 'w', encoding='utf-8') as obj:
         for links, title in all_answer_detail:
@@ -263,22 +280,41 @@ def crawl_think_links(driver:webdriver, username:str):
     numberpage = 1e-6        
     for p in range(1, maxpages + 1):
         driver.get(think_one + str(p))
-        WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "Pagination"))
+        # 等待想法列表加载，而不是等待分页元素（因为可能只有一页）
+        try:
+            WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "PinItem"))
+        except:
+            print(f"第 {p} 页没有找到想法内容，跳过...")
+            continue
         items = driver.find_elements(By.CLASS_NAME, "PinItem")
         #crawl answer one by one
         for i in range(len(items)):
             begin = now()
-            RichContent = items[i].find_element(By.CLASS_NAME, 'RichContent-inner')
-            clockitem = items[i].find_element(By.CLASS_NAME, 'ContentItem-time')
+            try:
+                RichContent = items[i].find_element(By.CLASS_NAME, 'RichContent-inner')
+                clockitem = items[i].find_element(By.CLASS_NAME, 'ContentItem-time')
+            except Exception as e:
+                print(f"第 {i} 个想法获取基本信息失败: {e}，跳过...")
+                continue
+            
             try:
                 WebDriverWait(items[i], timeout=10).until(lambda d: len(d.text) > 2)
             except:
                 driver.get(think_one + str(p))
-                WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "Pagination"))
+                try:
+                    WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "PinItem"))
+                except:
+                    print(f"重新加载第 {p} 页失败，跳过该想法...")
+                    continue
                 items = driver.find_elements(By.CLASS_NAME, "PinItem")
-                RichContent = items[i].find_element(By.CLASS_NAME, 'RichContent-inner')
-                clockitem = items[i].find_element(By.CLASS_NAME, 'ContentItem-time')
-                WebDriverWait(items[i], timeout=10).until(lambda d: len(d.text) > 2)
+                try:
+                    RichContent = items[i].find_element(By.CLASS_NAME, 'RichContent-inner')
+                    clockitem = items[i].find_element(By.CLASS_NAME, 'ContentItem-time')
+                    WebDriverWait(items[i], timeout=10).until(lambda d: len(d.text) > 2)
+                except Exception as e:
+                    print(f"重新加载后仍无法获取第 {i} 个想法: {e}，跳过...")
+                    continue
+            
             # clockspan = clockitem.find_element(By.TAG_NAME, 'span')
             clock = clockitem.text
             clock = clock[3 + 1:].replace(":", "_")
@@ -1173,6 +1209,20 @@ def zhihu():
 
     driver, username = login_loadsavecookie(driver)
     
+    # 如果指定了目标用户，使用指定的用户名；否则使用登录用户的用户名
+    if args.target_user:
+        username = args.target_user
+        print(f"=" * 60)
+        print(f"将爬取指定用户的内容: {username}")
+        print(f"知乎主页: https://www.zhihu.com/people/{username}")
+        print(f"=" * 60)
+        logfp.write(nowtime() + f', 爬取目标用户: {username}\n')
+    else:
+        print(f"=" * 60)
+        print(f"将爬取登录用户自己的内容: {username}")
+        print(f"=" * 60)
+        logfp.write(nowtime() + f', 爬取登录用户: {username}\n')
+    
     # #crawl think links
     if crawl_think:
         crawl_think_links(driver, username)
@@ -1245,6 +1295,8 @@ if __name__ == "__main__":
     parser.add_argument('--MarkDown', action="store_true", help=r'save MarkDown')
     parser.add_argument('--links_scratch', action="store_true", \
                         help=r'crawl links scratch for answer or article, 是否使用已经保存好的website和title, 否则再次爬取website')
+    parser.add_argument('--target_user', type=str, default=None, \
+                        help=r'指定要爬取的用户名（知乎个人主页URL中的用户标识，如 zhang-san）。不指定则爬取登录用户自己的内容。')
     args = parser.parse_args()
     sleeptime = args.sleep_time
     crawl_think = args.think
@@ -1255,10 +1307,10 @@ if __name__ == "__main__":
     MarkDown_FORMAT = args.MarkDown
     
     # crawl_think = True
-    crawl_article = True
+    # crawl_article = True
     # crawl_answer = True
     # crawl_links_scratch = True
-    MarkDown_FORMAT = True
+    # MarkDown_FORMAT = True
     # python crawler.py --think --MarkDown --links_scratch
     # python crawler.py --article  --MarkDown --links_scratch
     # python crawler.py --answer  --MarkDown --links_scratch
