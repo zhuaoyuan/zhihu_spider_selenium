@@ -166,3 +166,8 @@ cookie/
 msedgedriver/
 answer/answers_*.txt
 think/all_txt.txt
+
+# 爬取数据目录
+answer/
+article/
+think/
