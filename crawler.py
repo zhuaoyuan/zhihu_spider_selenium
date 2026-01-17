@@ -1030,7 +1030,25 @@ def crawl_answer_detail(driver:webdriver):
         
         #get article text
         driver.get(website)
-        WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "AnswerItem-editButtonText"))
+        try:
+            WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "AnswerItem-editButtonText"))
+        except Exception as e:
+            # diagnostics: save title/url/screenshot for later selector tuning
+            page_title = driver.title
+            page_url = driver.current_url
+            diag_name = f"answer_wait_timeout_{nowtime()}.png"
+            diag_path = os.path.join(dircrea, diag_name)
+            try:
+                driver.save_screenshot(diag_path)
+            except Exception:
+                diag_path = "screenshot_failed"
+            print(f"[diagnostic] answer page wait timeout: title={page_title} url={page_url} screenshot={diag_path}")
+            try:
+                logfp.write(f"[diagnostic] answer page wait timeout: title={page_title} url={page_url} screenshot={diag_path}\n")
+            except Exception:
+                pass
+            # continue trying to parse; some pages don't have edit button
+        url = driver.current_url
 
         #https://stackoverflow.com/questions/61877719/how-to-get-current-scroll-height-in-selenium-python
         scrollHeight = driver.execute_script('''return document.getElementsByClassName("QuestionAnswer-content")[0].scrollHeight''')
@@ -1123,7 +1141,6 @@ def crawl_answer_detail(driver:webdriver):
             Comment = driver.find_element(By.CLASS_NAME, "QuestionHeader-Comment").text
             article += f"\n\n 赞同数：{voteup}，评论数：{Comment}\n"
 
-            url = driver.current_url
             article += "<br>\n\n["+url+"](" + url + ")<br>\n"
             driver.execute_script("const para = document.createElement(\"h2\"); \
                                     const br = document.createElement(\"br\"); \
