@@ -161,47 +161,65 @@ def crawl_article_links(driver:webdriver, username:str):
         
     #crawl articles links
     articles = f'https://www.zhihu.com/people/{username}/posts'
-    articles_one = f'https://www.zhihu.com/people/{username}/posts?page='
     article_detail = r'https://zhuanlan.zhihu.com/p/'
 
     driver.get(articles)
     try:
-        WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "Pagination"))
-        pages = driver.find_elements(By.CLASS_NAME, 'PaginationButton')[-2]
-        assert isinstance(int(pages.text), int)
-        maxpages = int(pages.text)
+        WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "ArticleItem"))
     except:
-        pages = driver.find_elements(By.CLASS_NAME, 'PaginationButton')
-        if len(pages)==0:
-            maxpages = 1
-        else:
-            pages = pages[-2]
-            assert isinstance(int(pages.text), int)
-            maxpages = int(pages.text)
+        print("页面加载失败，未找到文章内容")
+        return
     
     all_article_detail = {}
-    #how many pages of articles
-    for p in range(1, maxpages + 1):
-        driver.get(articles_one + str(p))
-        try:
-            WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "ArticleItem"))
-        except:
-            print(f"第 {p} 页没有找到文章内容，跳过...")
-            continue
+    last_count = 0
+    no_new_content_count = 0
+    max_no_new_content = 3  # 连续3次没有新内容则停止
+    
+    # 使用滚动下拉分页
+    while True:
+        # 等待内容加载
+        crawlsleep(2)
+        
+        # 获取当前所有文章项
         items = driver.find_elements(By.CLASS_NAME, "ArticleItem")
-        #crawl article one by one
+        current_count = len(items)
+        
+        # 如果数量没有增加，记录一次
+        if current_count == last_count:
+            no_new_content_count += 1
+            if no_new_content_count >= max_no_new_content:
+                print("没有更多文章内容，停止滚动")
+                break
+        else:
+            no_new_content_count = 0
+        
+        last_count = current_count
+        
+        # 解析当前可见的所有文章
         for a in range(len(items)):
             try:
+                # 检查是否已经解析过
                 introduce = items[a].get_attribute("data-zop")
+                if not introduce:
+                    continue
                 itemId = json.loads(introduce)
                 links = items[a].find_elements(By.TAG_NAME, 'a')[0].get_attribute('href')
-                # id = itemId['itemId']
                 title = str(itemId['title']).strip()
-                all_article_detail[str(title)] = links #article_detail + str(id)
+                # 如果标题已存在，跳过
+                if title not in all_article_detail:
+                    all_article_detail[str(title)] = links
             except Exception as e:
-                print(f"解析第 {a} 个文章时出错: {e}")
                 continue
-        crawlsleep(sleeptime)
+        
+        # 滚动到底部
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        crawlsleep(1)
+        
+        # 尝试滚动到更底部，触发加载
+        driver.execute_script("window.scrollBy(0, 1000);")
+        crawlsleep(2)
+    
+    print(f"共爬取到 {len(all_article_detail)} 篇文章")
     with open(os.path.join(articledir, 'article.txt'), 'w', encoding='utf-%d'%(6+2)) as obj:
         for key, val in all_article_detail.items():
             obj.write(val + " " + key + '\n')
@@ -209,47 +227,66 @@ def crawl_article_links(driver:webdriver, username:str):
 def crawl_answers_links(driver:webdriver, username:str):
     #crawl answers links
     answer = f'https://www.zhihu.com/people/{username}/answers'
-    answer_one = f'https://www.zhihu.com/people/{username}/answers?page='
 
     driver.get(answer)
     try:
-        WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "Pagination"))
-        pages = driver.find_elements(By.CLASS_NAME, 'PaginationButton')[-2]
-        assert isinstance(int(pages.text), int)
-        maxpages = int(pages.text)
+        WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "AnswerItem"))
     except:
-        pages = driver.find_elements(By.CLASS_NAME, 'PaginationButton')
-        if len(pages)==0:
-            maxpages = 1
-        else:
-            pages = pages[-2]
-            assert isinstance(int(pages.text), int)
-            maxpages = int(pages.text)
+        print("页面加载失败，未找到回答内容")
+        return
     
     all_answer_detail = []
-    #how many pages of answers
-    for p in range(1, maxpages + 1):
-        driver.get(answer_one + str(p))
-        # 等待回答列表加载，而不是等待分页元素（因为可能只有一页）
-        try:
-            WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "AnswerItem"))
-        except:
-            print(f"第 {p} 页没有找到回答内容，跳过...")
-            continue
+    processed_links = set()  # 用于去重
+    last_count = 0
+    no_new_content_count = 0
+    max_no_new_content = 3  # 连续3次没有新内容则停止
+    
+    # 使用滚动下拉分页
+    while True:
+        # 等待内容加载
+        crawlsleep(2)
+        
+        # 获取当前所有回答项
         items = driver.find_elements(By.CLASS_NAME, "AnswerItem")
-        #crawl answer one by one
+        current_count = len(items)
+        
+        # 如果数量没有增加，记录一次
+        if current_count == last_count:
+            no_new_content_count += 1
+            if no_new_content_count >= max_no_new_content:
+                print("没有更多回答内容，停止滚动")
+                break
+        else:
+            no_new_content_count = 0
+        
+        last_count = current_count
+        
+        # 解析当前可见的所有回答
         for i in range(len(items)):
             try:
                 introduce = items[i].get_attribute("data-zop")
+                if not introduce:
+                    continue
                 itemId = json.loads(introduce)
                 id = itemId['itemId']
                 title = str(itemId['title'])
                 links = items[i].find_elements(By.TAG_NAME, 'a')[0].get_attribute('href')
-                all_answer_detail.append([links, str(title)])
+                # 如果链接已存在，跳过
+                if links not in processed_links:
+                    all_answer_detail.append([links, str(title)])
+                    processed_links.add(links)
             except Exception as e:
-                print(f"解析第 {i} 个回答时出错: {e}")
                 continue
-        crawlsleep(sleeptime)
+        
+        # 滚动到底部
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        crawlsleep(1)
+        
+        # 尝试滚动到更底部，触发加载
+        driver.execute_script("window.scrollBy(0, 1000);")
+        crawlsleep(2)
+    
+    print(f"共爬取到 {len(all_answer_detail)} 个回答")
     with open(os.path.join(answerdir, 'answers.txt'), 'w', encoding='utf-8') as obj:
         for links, title in all_answer_detail:
             obj.write(links + " " + title + '\n')
@@ -257,37 +294,44 @@ def crawl_answers_links(driver:webdriver, username:str):
 def crawl_think_links(driver:webdriver, username:str):
     #crawl think links
     think = f'https://www.zhihu.com/people/{username}/pins'
-    think_one = f'https://www.zhihu.com/people/{username}/pins?page='
 
     driver.get(think)
     try:
-        WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "Pagination"))
-        pages = driver.find_elements(By.CLASS_NAME, 'PaginationButton')[-2]
-        assert isinstance(int(pages.text), int)
-        maxpages = int(pages.text)
+        WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "PinItem"))
     except:
-        pages = driver.find_elements(By.CLASS_NAME, 'PaginationButton')
-        if len(pages)==0:
-            maxpages = 1
-        else:
-            pages = pages[-2]
-            assert isinstance(int(pages.text), int)
-            maxpages = int(pages.text)
+        print("页面加载失败，未找到想法内容")
+        return
     
     # all_think_detail = []
     #how many pages of think
     allbegin = now()
-    numberpage = 1e-6        
-    for p in range(1, maxpages + 1):
-        driver.get(think_one + str(p))
-        # 等待想法列表加载，而不是等待分页元素（因为可能只有一页）
-        try:
-            WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "PinItem"))
-        except:
-            print(f"第 {p} 页没有找到想法内容，跳过...")
-            continue
+    numberpage = 1e-6
+    processed_clocks = set()  # 用于跟踪已处理的想法（通过时间戳）
+    last_count = 0
+    no_new_content_count = 0
+    max_no_new_content = 3  # 连续3次没有新内容则停止
+    
+    # 使用滚动下拉分页
+    while True:
+        # 等待内容加载
+        crawlsleep(2)
+        
+        # 获取当前所有想法项
         items = driver.find_elements(By.CLASS_NAME, "PinItem")
-        #crawl answer one by one
+        current_count = len(items)
+        
+        # 如果数量没有增加，记录一次
+        if current_count == last_count:
+            no_new_content_count += 1
+            if no_new_content_count >= max_no_new_content:
+                print("没有更多想法内容，停止滚动")
+                break
+        else:
+            no_new_content_count = 0
+        
+        last_count = current_count
+        
+        # 处理当前可见的所有想法
         for i in range(len(items)):
             begin = now()
             try:
@@ -300,13 +344,10 @@ def crawl_think_links(driver:webdriver, username:str):
             try:
                 WebDriverWait(items[i], timeout=10).until(lambda d: len(d.text) > 2)
             except:
-                driver.get(think_one + str(p))
-                try:
-                    WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "PinItem"))
-                except:
-                    print(f"重新加载第 {p} 页失败，跳过该想法...")
-                    continue
+                # 重新获取items，因为页面可能已更新
                 items = driver.find_elements(By.CLASS_NAME, "PinItem")
+                if i >= len(items):
+                    continue
                 try:
                     RichContent = items[i].find_element(By.CLASS_NAME, 'RichContent-inner')
                     clockitem = items[i].find_element(By.CLASS_NAME, 'ContentItem-time')
@@ -318,10 +359,18 @@ def crawl_think_links(driver:webdriver, username:str):
             # clockspan = clockitem.find_element(By.TAG_NAME, 'span')
             clock = clockitem.text
             clock = clock[3 + 1:].replace(":", "_")
+            
+            # 检查是否已处理过
+            if clock in processed_clocks:
+                continue
+            
             dirthink = os.path.join(thinkdir, clock)
             if os.path.exists(dirthink):
                 print(f"{dirthink}已经爬取过了，不再重复爬取")
+                processed_clocks.add(clock)
                 continue
+            
+            processed_clocks.add(clock)
             os.makedirs(dirthink, exist_ok=True)
             try:
                 RichContent.find_element(By.CLASS_NAME, 'Button').click()
@@ -380,11 +429,20 @@ def crawl_think_links(driver:webdriver, username:str):
             end = now()
             print("爬取一篇想法耗时：", clock,  round(end - begin, 3))
             logfp.write("爬取一篇想法耗时：" +clock + " "+ str(round(end - begin, 3)) + "\n")
-        numberpage += 1
-        # crawlsleep(600)
+            numberpage += 1
+        
+        # 滚动到底部，触发加载更多内容
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        crawlsleep(1)
+        
+        # 尝试滚动到更底部，触发加载
+        driver.execute_script("window.scrollBy(0, 1000);")
+        crawlsleep(2)
+    
     allend = now()
-    print("平均爬取一篇想法耗时：", round((allend - allbegin) / numberpage, 3))
-    logfp.write("平均爬取一篇想法耗时：" + str(round((allend - allbegin) / numberpage, 3)) + "\n")
+    if numberpage > 0:
+        print("平均爬取一篇想法耗时：", round((allend - allbegin) / numberpage, 3))
+        logfp.write("平均爬取一篇想法耗时：" + str(round((allend - allbegin) / numberpage, 3)) + "\n")
     
     dealthink(thinkdir)
 
