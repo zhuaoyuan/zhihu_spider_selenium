@@ -166,6 +166,7 @@ cookie/
 msedgedriver/
 answer/answers_*.txt
 think/all_txt.txt
+.DS_Store
 
 # 爬取数据目录
 answer/

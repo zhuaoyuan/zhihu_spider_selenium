@@ -1031,7 +1031,9 @@ def crawl_answer_detail(driver:webdriver):
         #get article text
         driver.get(website)
         try:
-            WebDriverWait(driver, timeout=10).until(lambda d: d.find_element(By.CLASS_NAME, "AnswerItem-editButtonText"))
+            WebDriverWait(driver, timeout=10).until(
+                lambda d: d.find_element(By.CLASS_NAME, "QuestionAnswer-content")
+            )
         except Exception as e:
             # diagnostics: save title/url/screenshot for later selector tuning
             page_title = driver.title
@@ -1137,8 +1139,14 @@ def crawl_answer_detail(driver:webdriver):
 
             article = article.replace("修改\n", "").replace("开启赞赏\n", "开启赞赏, ").replace("添加评论\n", "").replace("分享\n", "").\
                 replace("收藏\n", "").replace("设置\n", "")
-            voteup = driver.find_element(By.CLASS_NAME, "VoteButton--up").text
-            Comment = driver.find_element(By.CLASS_NAME, "QuestionHeader-Comment").text
+            try:
+                voteup = driver.find_element(By.CLASS_NAME, "VoteButton--up").text
+            except Exception:
+                voteup = "not found"
+            try:
+                Comment = driver.find_element(By.CLASS_NAME, "QuestionHeader-Comment").text
+            except Exception:
+                Comment = "not found"
             article += f"\n\n 赞同数：{voteup}，评论数：{Comment}\n"
 
             article += "<br>\n\n["+url+"](" + url + ")<br>\n"
