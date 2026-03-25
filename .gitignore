@@ -9,6 +9,7 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+
 develop-eggs/
 dist/
 downloads/
@@ -162,6 +163,7 @@ cython_debug/
 # Project specific
 log/
 cookie/
+data/
 *.pkl
 msedgedriver/
 answer/answers_*.txt
