@@ -226,6 +226,32 @@ def should_keep(item_dt: datetime | None, time_begin: datetime | None) -> bool:
     return item_dt > time_begin
 
 
+def pick_title_from_html(content: str, max_len: int = 60) -> str:
+    if not content:
+        return ""
+    soup = BeautifulSoup(content, "html.parser")
+    for tag in ["h1", "h2", "h3", "p", "div"]:
+        for node in soup.find_all(tag):
+            text = node.get_text(" ", strip=True)
+            if text:
+                return text[:max_len]
+    text = soup.get_text(" ", strip=True)
+    return text[:max_len] if text else ""
+
+
+def is_bad_title(title: str) -> bool:
+    if not title:
+        return True
+    text = title.strip()
+    if not text:
+        return True
+    if re.fullmatch(r"\d+", text):
+        return True
+    if re.fullmatch(r"article[_-]?\d+", text, flags=re.IGNORECASE):
+        return True
+    return False
+
+
 def normalize_answer(item: dict) -> CrawlItem:
     answer_id = str(item.get("id"))
     q_title = (item.get("question") or {}).get("title") or "untitled_answer"
@@ -248,7 +274,16 @@ def normalize_answer(item: dict) -> CrawlItem:
 
 def normalize_article(item: dict) -> CrawlItem:
     article_id = str(item.get("id"))
-    title = item.get("title") or f"article_{article_id}"
+    raw_title = (item.get("title") or "").strip()
+    title = raw_title
+    if is_bad_title(title):
+        title = (item.get("excerpt_title") or "").strip()
+    if is_bad_title(title):
+        title = pick_title_from_html(item.get("content") or "")
+    if is_bad_title(title):
+        title = (item.get("excerpt") or "").strip()[:60]
+    if is_bad_title(title):
+        title = f"article_{article_id}"
     return CrawlItem(
         id=article_id,
         title=title,
@@ -398,21 +433,26 @@ def crawl_column(
     output_root: Path,
     time_begin: datetime | None,
 ) -> None:
+    column_meta_url = f"https://www.zhihu.com/api/v4/columns/{column_id}"
+    column_meta = request_json(session, column_meta_url)
+    column_title = (column_meta.get("title") or "").strip()
+    column_dir_name = sanitize_filename(column_title) if column_title else column_id
+
     url = f"https://www.zhihu.com/api/v4/columns/{column_id}/items?limit=20&offset=0"
     items = fetch_paginated(
         session=session,
         first_url=url,
         normalizer=normalize_article,
         time_begin=time_begin,
-        progress_label=f"column/{column_id}",
+        progress_label=f"column/{column_title or column_id}",
     )
-    out_dir = output_root / column_id
+    out_dir = output_root / column_dir_name
     ensure_dir(out_dir)
     for idx, item in enumerate(items, start=1):
         dump_item_md(item, out_dir, idx)
         if idx % 10 == 0 or idx == len(items):
-            print(f"[column/{column_id}] 已写入 {idx}/{len(items)}")
-    print(f"[column/{column_id}] 完成，文件数: {len(items)}，目录: {out_dir}")
+            print(f"[column/{column_title or column_id}] 已写入 {idx}/{len(items)}")
+    print(f"[column/{column_title or column_id}] 完成，文件数: {len(items)}，目录: {out_dir}")
 
 
 def build_parser() -> argparse.ArgumentParser:
