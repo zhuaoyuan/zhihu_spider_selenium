@@ -4,6 +4,7 @@
 - 按用户抓取：`pins`、`posts`、`answers`
 - 按专栏抓取：`column_id` 下全部文章
 - 按时间过滤：仅抓取晚于 `time_begin` 的内容
+- 批量增量更新：扫描 `data/user` 与 `data/column` 自动补抓最新内容
 - 输出为 Markdown，目录结构清晰
 
 当前实现基于 `cookie + Zhihu v4 API`，已替换旧版页面 DOM 抓取逻辑。
@@ -15,6 +16,7 @@
 - 用户模式：`--user <用户名> --contents <pins/posts/answers...>`
 - 专栏模式：`--column-id <专栏ID>`
 - 时间过滤：`--time-begin "YYYY-MM-DD [HH:MM[:SS]]"`（可空）
+- 批量更新：`update-data` 会按目录中“最近日期”增量抓取
 - 进度打印：按分页和写入批次输出进度
 - 去重：按内容 `id` 去重，避免重复落盘
 
@@ -91,6 +93,12 @@ venv/bin/python crawler.py check-cookie
 ./run.sh column c_1494255546366226432 --time-begin "2026-01-01 00:00:00"
 ```
 
+### 批量增量更新
+
+```bash
+./run.sh update-data [--output-dir DIR]
+```
+
 ---
 
 ## 4.2 底层入口（crawler.py）
@@ -98,6 +106,7 @@ venv/bin/python crawler.py check-cookie
 ```bash
 venv/bin/python crawler.py login
 venv/bin/python crawler.py check-cookie
+venv/bin/python crawler.py update-data --output-dir data
 
 # 用户模式
 venv/bin/python crawler.py crawl \
@@ -141,25 +150,29 @@ venv/bin/python crawler.py crawl \
 
 ```text
 data/
-  xi-bi-tang/
-    posts/
-      0001_xxx.md
-    answers/
-      0001_xxx.md
-    pins/
-      0001_xxx.md
+  user/
+    锡璧堂主_xi-bi-tang/
+      posts/
+        20260311_xxx.md
+      answers/
+        20260311_xxx.md
+      pins/
+        20260311_xxx.md
 ```
 
 ### 专栏模式
 
 ```text
 data/
-  宏观洞察/
-    0001_xxx.md
-    0002_xxx.md
+  column/
+    宏观洞察_c_1494255546366226432/
+      20260311_xxx.md
+      20260312_xxx.md
 ```
 
-说明：专栏目录名默认使用“专栏标题”；若标题不可用则回退为 `column_id`。
+说明：
+- 用户目录名为 `displayname_urltoken`（例如 `波动率就是趋势_72-80-97-79-11`）
+- 专栏目录名为 `专栏标题_column_id`；若标题不可用则回退为 `column_id`
 
 每个 Markdown 文件包含：
 - 标题

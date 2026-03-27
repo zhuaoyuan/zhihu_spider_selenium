@@ -27,6 +27,8 @@ from selenium.webdriver import EdgeOptions
 BASE_DIR = Path(__file__).resolve().parent
 COOKIE_PATH = BASE_DIR / "cookie" / "cookie_zhihu.pkl"
 DEFAULT_OUTPUT_DIR = BASE_DIR / "data"
+USER_GROUP_DIR = "user"
+COLUMN_GROUP_DIR = "column"
 DEFAULT_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -60,6 +62,29 @@ def ts_to_iso(ts: int | None) -> str:
     if not ts:
         return ""
     return datetime.fromtimestamp(ts).isoformat(timespec="seconds")
+
+
+def normalize_timestamp(value) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def ts_to_yyyymmdd(ts: int | None) -> str:
+    if not ts:
+        return ""
+    return datetime.fromtimestamp(ts).strftime("%Y%m%d")
+
+
+def pick_item_date_prefix(item: CrawlItem) -> str:
+    prefix = ts_to_yyyymmdd(item.created_ts) or ts_to_yyyymmdd(item.updated_ts)
+    if prefix:
+        return prefix
+    return datetime.now().strftime("%Y%m%d")
 
 
 def parse_time_begin(value: str | None) -> datetime | None:
@@ -259,8 +284,8 @@ def normalize_answer(item: dict) -> CrawlItem:
     url = (item.get("url") or "").replace("api/v4/answers", "question")
     if "/question/" in url and "/answer/" not in url:
         url = f"https://www.zhihu.com/question/{(item.get('question') or {}).get('id', '')}/answer/{answer_id}"
-    created = item.get("created_time")
-    updated = item.get("updated_time")
+    created = normalize_timestamp(item.get("created_time"))
+    updated = normalize_timestamp(item.get("updated_time"))
     return CrawlItem(
         id=answer_id,
         title=title,
@@ -273,24 +298,69 @@ def normalize_answer(item: dict) -> CrawlItem:
 
 
 def normalize_article(item: dict) -> CrawlItem:
-    article_id = str(item.get("id"))
-    raw_title = (item.get("title") or "").strip()
+    article_obj = item.get("article") if isinstance(item.get("article"), dict) else {}
+    target_obj = item.get("target") if isinstance(item.get("target"), dict) else {}
+    source = article_obj or target_obj or item
+
+    article_id = str(
+        source.get("id")
+        or item.get("id")
+        or target_obj.get("id")
+        or article_obj.get("id")
+        or ""
+    ).strip()
+
+    raw_title = str(
+        source.get("title")
+        or item.get("title")
+        or source.get("excerpt_title")
+        or item.get("excerpt_title")
+        or ""
+    ).strip()
     title = raw_title
     if is_bad_title(title):
-        title = (item.get("excerpt_title") or "").strip()
+        title = str(source.get("excerpt_title") or item.get("excerpt_title") or "").strip()
     if is_bad_title(title):
-        title = pick_title_from_html(item.get("content") or "")
+        title = pick_title_from_html(str(source.get("content") or item.get("content") or ""))
     if is_bad_title(title):
-        title = (item.get("excerpt") or "").strip()[:60]
+        title = str(source.get("excerpt") or item.get("excerpt") or "").strip()[:60]
     if is_bad_title(title):
         title = f"article_{article_id}"
+
+    url = str(
+        source.get("url")
+        or item.get("url")
+        or source.get("share_url")
+        or item.get("share_url")
+        or ""
+    ).strip()
+    if not url and article_id:
+        url = f"https://zhuanlan.zhihu.com/p/{article_id}"
+
+    created = normalize_timestamp(
+        (
+        source.get("created")
+        or item.get("created")
+        or source.get("created_time")
+        or item.get("created_time")
+        )
+    )
+    updated = normalize_timestamp(
+        (
+        source.get("updated")
+        or item.get("updated")
+        or source.get("updated_time")
+        or item.get("updated_time")
+        )
+    )
+
     return CrawlItem(
         id=article_id,
         title=title,
-        url=item.get("url") or "",
-        created_ts=item.get("created"),
-        updated_ts=item.get("updated"),
-        html_content=item.get("content") or "",
+        url=url,
+        created_ts=created,
+        updated_ts=updated,
+        html_content=source.get("content") or item.get("content") or "",
         raw=item,
     )
 
@@ -305,8 +375,8 @@ def normalize_pin(item: dict) -> CrawlItem:
         id=pin_id,
         title=title,
         url=url,
-        created_ts=item.get("created"),
-        updated_ts=item.get("updated"),
+        created_ts=normalize_timestamp(item.get("created")),
+        updated_ts=normalize_timestamp(item.get("updated")),
         html_content=pin_content_to_markdown(item),
         raw=item,
     )
@@ -356,11 +426,7 @@ def fetch_paginated(
     return out
 
 
-def dump_item_md(item: CrawlItem, output_dir: Path, index: int) -> Path:
-    safe = sanitize_filename(item.title)
-    filename = f"{index:04d}_{safe}_{item.id}.md"
-    path = output_dir / filename
-
+def render_item_md(item: CrawlItem) -> str:
     content = item.html_content
     if "<" in content and ">" in content:
         body = html_to_markdown(content)
@@ -380,8 +446,249 @@ def dump_item_md(item: CrawlItem, output_dir: Path, index: int) -> Path:
         body,
         "",
     ]
-    path.write_text("\n".join(meta), encoding="utf-8")
+    return "\n".join(meta)
+
+
+def build_item_filename(item: CrawlItem) -> str:
+    date_prefix = pick_item_date_prefix(item)
+    safe = sanitize_filename(item.title)
+    return f"{date_prefix}_{safe}_{item.id}.md"
+
+
+def parse_md_meta(path: Path) -> dict[str, str]:
+    meta: dict[str, str] = {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for _ in range(40):
+                line = f.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if line == "---":
+                    break
+                m = re.match(r"^-?\s*(id|url|created|updated)\s*:\s*(.*)$", line)
+                if m:
+                    meta[m.group(1)] = m.group(2).strip()
+    except Exception:
+        return meta
+    return meta
+
+
+def extract_id_from_filename(path: Path) -> str | None:
+    m = re.search(r"_([A-Za-z0-9-]+)\.md$", path.name)
+    if not m:
+        return None
+    return m.group(1)
+
+
+def extract_date_iso_from_filename(path: Path) -> str:
+    m = re.match(r"^(20\d{6})_", path.name)
+    if not m:
+        return ""
+    try:
+        dt = datetime.strptime(m.group(1), "%Y%m%d")
+    except ValueError:
+        return ""
+    return dt.isoformat(timespec="seconds")
+
+
+def infer_item_url_from_path(path: Path, item_id: str) -> str:
+    if not item_id:
+        return ""
+    parts = path.parts
+    if "column" in parts:
+        return f"https://zhuanlan.zhihu.com/p/{item_id}"
+    if "user" in parts:
+        if "posts" in parts:
+            return f"https://zhuanlan.zhihu.com/p/{item_id}"
+        if "pins" in parts:
+            return f"https://www.zhihu.com/pin/{item_id}"
+        if "answers" in parts:
+            return f"https://www.zhihu.com/answer/{item_id}"
+    return ""
+
+
+def parse_dt_loose(value: str) -> datetime | None:
+    if not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def backfill_md_meta_file(path: Path) -> bool:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except Exception:
+        return False
+
+    lines = raw.splitlines()
+    if not lines:
+        return False
+
+    title = ""
+    first = lines[0].strip()
+    if first.startswith("# "):
+        title = first[2:].strip()
+    if not title:
+        title = path.stem
+
+    split_idx = None
+    for i, line in enumerate(lines):
+        if line.strip() == "---":
+            split_idx = i
+            break
+    if split_idx is None:
+        return False
+
+    meta = parse_md_meta(path)
+    item_id = meta.get("id", "").strip() or (extract_id_from_filename(path) or "")
+    created = meta.get("created", "").strip() or extract_date_iso_from_filename(path)
+    updated = meta.get("updated", "").strip() or created
+    url = meta.get("url", "").strip() or infer_item_url_from_path(path, item_id)
+
+    body_lines = lines[split_idx + 1 :]
+    while body_lines and not body_lines[0].strip():
+        body_lines = body_lines[1:]
+    body = "\n".join(body_lines).rstrip()
+
+    rebuilt = "\n".join(
+        [
+            f"# {title}",
+            "",
+            f"- id: {item_id}",
+            f"- url: {url}",
+            f"- created: {created}",
+            f"- updated: {updated}",
+            "",
+            "---",
+            "",
+            body,
+            "",
+        ]
+    )
+    if rebuilt == raw:
+        return False
+    path.write_text(rebuilt, encoding="utf-8")
+    return True
+
+
+def backfill_md_meta_dir(dir_path: Path) -> int:
+    fixed = 0
+    for path in dir_path.glob("*.md"):
+        if backfill_md_meta_file(path):
+            fixed += 1
+    return fixed
+
+
+def fetch_user_identity(session: requests.Session, user_ref: str) -> tuple[str, str]:
+    obj = request_json(session, f"https://www.zhihu.com/api/v4/members/{user_ref}")
+    url_token = str(obj.get("url_token") or "").strip()
+    display_name = str(obj.get("name") or "").strip()
+    if not url_token or not display_name:
+        raise RuntimeError(f"无法识别用户身份: {user_ref}")
+    return url_token, display_name
+
+
+def format_user_dir_name(display_name: str, url_token: str) -> str:
+    safe_display_name = sanitize_filename(display_name)
+    return f"{safe_display_name}_{url_token}"
+
+
+def parse_user_dir_name(name: str) -> tuple[str | None, str | None]:
+    if "_" not in name:
+        return None, None
+    display_name, url_token = name.rsplit("_", 1)
+    if not display_name or not url_token:
+        return None, None
+    return display_name, url_token
+
+
+def build_existing_id_index(output_dir: Path) -> dict[str, Path]:
+    out: dict[str, Path] = {}
+    for path in output_dir.glob("*.md"):
+        iid = extract_id_from_filename(path)
+        if iid:
+            out[iid] = path
+            continue
+        meta = parse_md_meta(path)
+        iid = (meta.get("id") or "").strip()
+        if iid:
+            out[iid] = path
+    return out
+
+
+def dump_item_md(item: CrawlItem, output_dir: Path, existing_by_id: dict[str, Path]) -> Path:
+    filename = build_item_filename(item)
+    path = output_dir / filename
+    path.write_text(render_item_md(item), encoding="utf-8")
+    old_path = existing_by_id.get(item.id)
+    if old_path and old_path != path and old_path.exists():
+        old_path.unlink()
+    existing_by_id[item.id] = path
     return path
+
+
+def write_items(items: list[CrawlItem], out_dir: Path, progress_label: str) -> None:
+    ensure_dir(out_dir)
+    existing_by_id = build_existing_id_index(out_dir)
+    for idx, item in enumerate(items, start=1):
+        dump_item_md(item, out_dir, existing_by_id)
+        if idx % 10 == 0 or idx == len(items):
+            print(f"[{progress_label}] 已写入 {idx}/{len(items)}")
+
+
+def parse_column_dir_name(name: str) -> tuple[str, str | None]:
+    m = re.match(r"^(.*)_((?:c|p)_\d+)$", name)
+    if not m:
+        return name, None
+    return m.group(1), m.group(2)
+
+
+def format_column_dir_name(column_title: str, column_id: str) -> str:
+    safe_title = sanitize_filename(column_title) if column_title else column_id
+    if safe_title.endswith(f"_{column_id}"):
+        return safe_title
+    return f"{safe_title}_{column_id}"
+
+
+def extract_latest_date_from_filenames(dir_path: Path) -> datetime | None:
+    latest: datetime | None = None
+    for path in dir_path.glob("*.md"):
+        m = re.match(r"^(20\d{6})_", path.name)
+        if not m:
+            continue
+        try:
+            dt = datetime.strptime(m.group(1), "%Y%m%d")
+        except ValueError:
+            continue
+        if latest is None or dt > latest:
+            latest = dt
+    return latest
+
+
+def latest_created_from_dir(dir_path: Path) -> datetime | None:
+    latest: datetime | None = None
+    for path in dir_path.glob("*.md"):
+        meta = parse_md_meta(path)
+        dt = parse_dt_loose(meta.get("created", "")) or parse_dt_loose(meta.get("updated", ""))
+        if dt is None:
+            continue
+        if latest is None or dt > latest:
+            latest = dt
+    if latest is not None:
+        return latest
+    return extract_latest_date_from_filenames(dir_path)
 
 
 def crawl_user(
@@ -391,19 +698,22 @@ def crawl_user(
     output_root: Path,
     time_begin: datetime | None,
 ) -> None:
+    url_token, display_name = fetch_user_identity(session=session, user_ref=username)
+    user_dir_name = format_user_dir_name(display_name, url_token)
+
     spec = {
         "answers": {
-            "url": f"https://www.zhihu.com/api/v4/members/{username}/answers?limit=20&offset=0&include=data[*].content,question",
+            "url": f"https://www.zhihu.com/api/v4/members/{url_token}/answers?limit=20&offset=0&include=data[*].content,question",
             "normalizer": normalize_answer,
             "subdir": "answers",
         },
         "posts": {
-            "url": f"https://www.zhihu.com/api/v4/members/{username}/articles?limit=20&offset=0&include=data[*].content",
+            "url": f"https://www.zhihu.com/api/v4/members/{url_token}/articles?limit=20&offset=0&include=data[*].content",
             "normalizer": normalize_article,
             "subdir": "posts",
         },
         "pins": {
-            "url": f"https://www.zhihu.com/api/v4/members/{username}/pins?limit=20&offset=0",
+            "url": f"https://www.zhihu.com/api/v4/members/{url_token}/pins?limit=20&offset=0",
             "normalizer": normalize_pin,
             "subdir": "pins",
         },
@@ -416,15 +726,11 @@ def crawl_user(
             first_url=cfg["url"],
             normalizer=cfg["normalizer"],
             time_begin=time_begin,
-            progress_label=f"{username}/{content_type}",
+            progress_label=f"{url_token}/{content_type}",
         )
-        out_dir = output_root / username / cfg["subdir"]
-        ensure_dir(out_dir)
-        for idx, item in enumerate(items, start=1):
-            dump_item_md(item, out_dir, idx)
-            if idx % 10 == 0 or idx == len(items):
-                print(f"[{username}/{content_type}] 已写入 {idx}/{len(items)}")
-        print(f"[{username}/{content_type}] 完成，文件数: {len(items)}，目录: {out_dir}")
+        out_dir = output_root / USER_GROUP_DIR / user_dir_name / cfg["subdir"]
+        write_items(items, out_dir, f"{url_token}/{content_type}")
+        print(f"[{url_token}/{content_type}] 完成，文件数: {len(items)}，目录: {out_dir}")
 
 
 def crawl_column(
@@ -436,7 +742,7 @@ def crawl_column(
     column_meta_url = f"https://www.zhihu.com/api/v4/columns/{column_id}"
     column_meta = request_json(session, column_meta_url)
     column_title = (column_meta.get("title") or "").strip()
-    column_dir_name = sanitize_filename(column_title) if column_title else column_id
+    column_dir_name = format_column_dir_name(column_title, column_id)
 
     url = f"https://www.zhihu.com/api/v4/columns/{column_id}/items?limit=20&offset=0"
     items = fetch_paginated(
@@ -446,13 +752,67 @@ def crawl_column(
         time_begin=time_begin,
         progress_label=f"column/{column_title or column_id}",
     )
-    out_dir = output_root / column_dir_name
-    ensure_dir(out_dir)
-    for idx, item in enumerate(items, start=1):
-        dump_item_md(item, out_dir, idx)
-        if idx % 10 == 0 or idx == len(items):
-            print(f"[column/{column_title or column_id}] 已写入 {idx}/{len(items)}")
+    out_dir = output_root / COLUMN_GROUP_DIR / column_dir_name
+    write_items(items, out_dir, f"column/{column_title or column_id}")
     print(f"[column/{column_title or column_id}] 完成，文件数: {len(items)}，目录: {out_dir}")
+
+
+def update_all_data(session: requests.Session, output_root: Path) -> None:
+    if not output_root.exists():
+        print(f"输出目录不存在，跳过: {output_root}")
+        return
+
+    user_root = output_root / USER_GROUP_DIR
+    column_root = output_root / COLUMN_GROUP_DIR
+
+    if user_root.exists():
+        for user_dir in sorted(p for p in user_root.iterdir() if p.is_dir()):
+            display_name, url_token = parse_user_dir_name(user_dir.name)
+            if not display_name or not url_token:
+                print(f"[update] 跳过用户目录（目录名应为 displayname_urltoken）: {user_dir}")
+                continue
+            content_subdirs = [kind for kind in ("pins", "posts", "answers") if (user_dir / kind).is_dir()]
+            for kind in content_subdirs:
+                subdir = user_dir / kind
+                fixed = backfill_md_meta_dir(subdir)
+                if fixed:
+                    print(f"[repair] user={display_name}, content={kind}, 已修复元数据文件: {fixed}")
+                latest_dt = latest_created_from_dir(subdir)
+                time_begin = latest_dt if latest_dt else None
+                time_begin_text = time_begin.strftime("%Y-%m-%d %H:%M:%S") if time_begin else "None"
+                print(f"[update] user={display_name}, token={url_token}, content={kind}, time_begin={time_begin_text}")
+                crawl_user(
+                    session=session,
+                    username=url_token,
+                    contents=[kind],
+                    output_root=output_root,
+                    time_begin=time_begin,
+                )
+
+    if column_root.exists():
+        for col_dir in sorted(p for p in column_root.iterdir() if p.is_dir()):
+            title_part, column_id = parse_column_dir_name(col_dir.name)
+            if not column_id:
+                print(f"[update] 跳过专栏目录（目录名未包含 column_id）: {col_dir}")
+                continue
+            fixed = backfill_md_meta_dir(col_dir)
+            if fixed:
+                print(f"[repair] column={title_part}, column_id={column_id}, 已修复元数据文件: {fixed}")
+            latest_dt = latest_created_from_dir(col_dir)
+            time_begin = latest_dt if latest_dt else None
+            time_begin_text = time_begin.strftime("%Y-%m-%d %H:%M:%S") if time_begin else "None"
+            print(f"[update] column={title_part}, column_id={column_id}, time_begin={time_begin_text}")
+            crawl_column(
+                session=session,
+                column_id=column_id,
+                output_root=output_root,
+                time_begin=time_begin,
+            )
+
+    if not user_root.exists() and not column_root.exists():
+        print(f"[update] 未发现 {USER_GROUP_DIR}/ 或 {COLUMN_GROUP_DIR}/ 目录: {output_root}")
+        print("[update] 请先按新目录结构整理数据后再执行批量更新。")
+        return
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -474,6 +834,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_check = sub.add_parser("check-cookie", help="检查 cookie 是否可用（请求一个轻量接口）")
     p_check.add_argument("--cookie-path", default=str(COOKIE_PATH))
+
+    p_update = sub.add_parser("update-data", help="扫描 data 目录并按最近日期增量更新全部内容")
+    p_update.add_argument("--cookie-path", default=str(COOKIE_PATH))
+    p_update.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
 
     return parser
 
@@ -519,6 +883,13 @@ def main() -> int:
 
     if args.command == "check-cookie":
         check_cookie(Path(args.cookie_path))
+        return 0
+
+    if args.command == "update-data":
+        sess = build_session(Path(args.cookie_path))
+        output_root = Path(args.output_dir)
+        ensure_dir(output_root)
+        update_all_data(session=sess, output_root=output_root)
         return 0
 
     if args.command == "crawl":

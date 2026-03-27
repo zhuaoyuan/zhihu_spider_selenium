@@ -16,12 +16,14 @@ usage() {
 用法:
   ./run.sh login
   ./run.sh check
+  ./run.sh update-data [--output-dir DIR]
   ./run.sh user <username> <contents...> [--time-begin "YYYY-MM-DD HH:MM:SS"] [--output-dir DIR]
   ./run.sh column <column_id> [--time-begin "YYYY-MM-DD HH:MM:SS"] [--output-dir DIR]
 
 示例:
   ./run.sh login
   ./run.sh check
+  ./run.sh update-data
   ./run.sh user xi-bi-tang posts answers
   ./run.sh user xi-bi-tang pins --time-begin "2026-01-01 00:00:00"
   ./run.sh column c_1494255546366226432
@@ -35,6 +37,10 @@ case "$cmd" in
     ;;
   check)
     "$PYTHON_BIN" crawler.py check-cookie
+    ;;
+  update-data)
+    shift
+    "$PYTHON_BIN" crawler.py update-data "$@"
     ;;
   user)
     shift
