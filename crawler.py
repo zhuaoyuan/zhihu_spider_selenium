@@ -354,13 +354,20 @@ def normalize_article(item: dict) -> CrawlItem:
         )
     )
 
+    content_candidates = [
+        str(((item.get("paid_info") or {}).get("content") or "")),
+        str(source.get("content") or ""),
+        str(item.get("content") or ""),
+    ]
+    html_content = max(content_candidates, key=len)
+
     return CrawlItem(
         id=article_id,
         title=title,
         url=url,
         created_ts=created,
         updated_ts=updated,
-        html_content=source.get("content") or item.get("content") or "",
+        html_content=html_content,
         raw=item,
     )
 
