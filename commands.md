@@ -139,3 +139,10 @@ python3 scripts/copy_newest_md.py 20260323 --data-root data --dry-run
 - `./run.sh user` / `column` / `update-data` 只是把参数转给 `crawler.py crawl` 或 `update-data`
 
 本仓库主流程以 `crawler.py` 与 `run.sh` 为准；`msedgedriver/` 下的历史副本脚本不作为标准入口列出。
+
+## 日常命令
+```
+source venv/bin/activate && venv/bin/python crawler.py update-data
+
+source venv/bin/activate && venv/bin/python scripts/copy_newest_md.py 20260402
+```
